@@ -84,8 +84,6 @@ impl PointMap {
         let extent = bounds.width().max(bounds.height());
         let factor = size as f32 / extent;
 
-        println!("size: {} extent: {}, factor: {}", size, extent, factor);
-
         // to make storage as effecient as possible, we re-order the
         // points in the vector to match the order they would appear
         // in the integer-indexed internal map.
@@ -145,6 +143,16 @@ impl PointMap {
     }
 }
 
+impl std::fmt::Debug for PointMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "PointMap:")?;
+        writeln!(f, "    size: {}", self.size)?;
+        writeln!(f, "    points: {}", self.points.len())?;
+        writeln!(f, "    bounds: {:?}", self.bounds)?;
+        Ok(())
+    }
+}
+
 fn points_bounds(points: &Vec<Point>) -> Bounds {
     let mut bounds = Bounds::new(f32::MAX, f32::MAX, f32::MIN, f32::MIN);
 
@@ -188,6 +196,8 @@ fn test() {
 
     let map = PointMap::new(points, 30);
 
+    println!("{:?}", map);
+
     // NOTE: we could provide a map.nearest(&mut out[0..4])->u32
     //       API if we wanted to remove the allocation for the
     //       returned vector.
@@ -196,12 +206,13 @@ fn test() {
 }
 
 fn main() {
-    let points = vec![Point::new(10.0, 20.0), Point::new(30.0, 40.0)];
-    let map = PointMap::new(points, 1);
+    test();
+    // let points = vec![Point::new(10.0, 20.0), Point::new(30.0, 40.0)];
+    // let map = PointMap::new(points, 1);
 
-    for span in &map.index {
-        println!("o: {} s: {}", span.offset, span.size);
-    }
+    // for span in &map.index {
+    //     println!("o: {} s: {}", span.offset, span.size);
+    // }
 }
 
 #[cfg(test)]
@@ -224,10 +235,6 @@ mod test {
     fn test_point_map_index_consistency() {
         let points = vec![Point::new(10.0, 20.0), Point::new(30.0, 40.0)];
         let map = PointMap::new(points, 1);
-
-        for span in &map.index {
-            println!("o: {} s: {}", span.offset, span.size);
-        }
 
         // validate the points ended up in the same span in the index
         //
