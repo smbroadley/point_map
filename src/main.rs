@@ -1,5 +1,4 @@
-use rand::{thread_rng, Rng};
-use std::collections::HashMap;
+use rand::Rng;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 struct Point {
@@ -71,6 +70,7 @@ struct PointMapSpan {
 }
 
 impl PointMapSpan {
+    #[allow(dead_code)]
     pub fn new(offset: u32, count: u32) -> Self {
         Self {
             offset,
@@ -89,7 +89,6 @@ struct PointMap {
     bounds: Bounds, // bounds of the points
     factor: f32,
     index: Vec<PointMapSpan>,
-    cell_index_of: Box<dyn Fn(&Point) -> u32>,
 }
 
 impl PointMap {
@@ -125,7 +124,7 @@ impl PointMap {
         // NOTE: we could just walk the list and build this,
         //       but for simplicity we use a map to gather results.
         //
-        let mut span_groups = HashMap::<u32, PointMapSpan>::new();
+        let mut span_groups = std::collections::HashMap::<u32, PointMapSpan>::new();
 
         for (i, p) in points.iter().enumerate() {
             let cell = cell_index_of(p);
@@ -154,7 +153,6 @@ impl PointMap {
             bounds,
             factor,
             index,
-            cell_index_of: Box::new(cell_index_of),
         }
     }
 
@@ -186,32 +184,11 @@ impl PointMap {
         (tl, br)
     }
 
-    fn visit_cells(&self, inc: &Circle) {
-        // calculate the top-left, and bottom-right cell
-        // indecies as our initial set of cells to consider
-        //
-        let cell_width = 1.0 / self.factor;
-
-        let (tl, br) = self.get_cell_bounds(inc);
-
-        for y in tl.1..br.1 {
-            for x in tl.0..br.0 {
-                let p = self.cell_to_point(x, y);
-            }
-        }
-    }
-
     pub fn nearest(&self, count: i32, c: &Circle) -> Vec<Point> {
         // calculate the top-left, and bottom-right cell
         // indecies as our initial set of cells to consider
         //
-        let (tl, br) = {
-            let r = c.radius;
-            let p = c.center;
-            let tl = self.point_to_cell(&Point::new(p.x - r, p.y - r));
-            let br = self.point_to_cell(&Point::new(p.x + r, p.y + r));
-            (tl, br)
-        };
+        let (tl, br) = self.get_cell_bounds(c);
 
         println!("tl: {:?}   br: {:?}", tl, br);
 
@@ -281,7 +258,7 @@ fn points_bounds(points: &Vec<Point>) -> Bounds {
 }
 
 fn gen_random_points(count: u32, bounds: Bounds) -> Vec<Point> {
-    let mut rng = thread_rng();
+    let mut rng = rand::thread_rng();
     let mut res = Vec::new();
 
     let w = bounds.right - bounds.left;
