@@ -65,6 +65,7 @@ struct PointMap {
     bounds: Bounds, // bounds of the points
     factor: f32,
     index: Vec<PointMapSpan>,
+    cell_index_of: Box<dyn Fn(&Point) -> u32>,
 }
 
 impl PointMap {
@@ -86,7 +87,7 @@ impl PointMap {
         // own 'offset + size' slice format for further optimization
         // instead of the Rust slice which uses more storage.
         //
-        let cell_index_of = |p: &Point| {
+        let cell_index_of = move |p: &Point| {
             let max_idx = size - 1;
             let cx = max_idx.min(((p.x - bounds.left) * factor) as u32);
             let cy = max_idx.min(((p.y - bounds.top) * factor) as u32);
@@ -129,6 +130,7 @@ impl PointMap {
             bounds,
             factor,
             index,
+            cell_index_of: Box::new(cell_index_of),
         }
     }
 
