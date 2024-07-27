@@ -1,6 +1,5 @@
-use std::{collections::HashMap, ops::Deref};
-
 use rand::{thread_rng, Rng};
+use std::collections::HashMap;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 struct Point {
@@ -11,6 +10,31 @@ struct Point {
 impl Point {
     pub fn new(x: f32, y: f32) -> Self {
         Self { x, y }
+    }
+
+    pub fn distance_to(&self, p: Point) -> f32 {
+        let dx = (self.x - p.x).abs();
+        let dy = (self.y - p.y).abs();
+
+        ((dx * dx) + (dy * dy)).sqrt()
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+struct Circle {
+    center: Point,
+    radius: f32,
+}
+
+impl Circle {
+    pub fn intersects(&self, other: &Circle) -> bool {
+        let dist = self.center.distance_to(other.center);
+
+        dist < (self.radius + other.radius)
+    }
+
+    fn new(center: Point, radius: f32) -> Self {
+        Self { center, radius }
     }
 }
 
@@ -134,20 +158,94 @@ impl PointMap {
         }
     }
 
-    pub fn nearest(&self, count: i32, sample: &Point, radius: f32) -> Vec<Point> {
-        // TODO: check that the following lambdas do inline
-        //
+    fn point_to_cell(&self, p: &Point) -> (u32, u32) {
         let max_idx = self.size - 1;
         let bounds = self.bounds;
         let factor = self.factor;
 
-        let cell_x_of = move |p: &Point| max_idx.min(((p.x - bounds.left) * factor) as u32);
-        let cell_y_of = move |p: &Point| max_idx.min(((p.y - bounds.top) * factor) as u32);
+        let cell_x = max_idx.min(((p.x - bounds.left) / factor) as u32);
+        let cell_y = max_idx.min(((p.y - bounds.top) / factor) as u32);
 
-        let cell_xy_of = move |p: &Point| (cell_x_of(p), cell_y_of(p));
-        let cell_index_of = move |p: &Point| cell_x_of(p) + cell_y_of(p) * self.size;
+        (cell_x, cell_y)
+    }
 
-        vec![]
+    fn cell_to_point(&self, x: u32, y: u32) -> Point {
+        let cell_width = 1.0 / self.factor;
+        let cell_halfwidth = cell_width / 2.0;
+
+        let px = self.bounds.left + cell_halfwidth + cell_width * x as f32;
+        let py = self.bounds.top + cell_halfwidth + cell_width * y as f32;
+
+        Point::new(px, py)
+    }
+
+    fn get_cell_bounds(&self, c: &Circle) -> ((u32, u32), (u32, u32)) {
+        let tl = self.point_to_cell(&Point::new(c.center.x - c.radius, c.center.y - c.radius));
+        let br = self.point_to_cell(&Point::new(c.center.x + c.radius, c.center.y + c.radius));
+
+        (tl, br)
+    }
+
+    fn visit_cells(&self, inc: &Circle) {
+        // calculate the top-left, and bottom-right cell
+        // indecies as our initial set of cells to consider
+        //
+        let cell_width = 1.0 / self.factor;
+
+        let (tl, br) = self.get_cell_bounds(inc);
+
+        for y in tl.1..br.1 {
+            for x in tl.0..br.0 {
+                let p = self.cell_to_point(x, y);
+            }
+        }
+    }
+
+    pub fn nearest(&self, count: i32, c: &Circle) -> Vec<Point> {
+        // calculate the top-left, and bottom-right cell
+        // indecies as our initial set of cells to consider
+        //
+        let (tl, br) = {
+            let r = c.radius;
+            let p = c.center;
+            let tl = self.point_to_cell(&Point::new(p.x - r, p.y - r));
+            let br = self.point_to_cell(&Point::new(p.x + r, p.y + r));
+            (tl, br)
+        };
+
+        println!("tl: {:?}   br: {:?}", tl, br);
+
+        let mut results = Vec::<Point>::with_capacity(count as usize);
+
+        for y in tl.1..=br.1 {
+            for x in tl.0..=br.0 {
+                // check to see if a circle around the sample point
+                // intersects the circle surrounding the cell
+                //
+                let p = self.cell_to_point(x, y);
+                let cr = 1.0 / self.factor;
+
+                println!(
+                    "searching: cell({}, {}) point({:?}) radius({})",
+                    x, y, p, cr
+                );
+
+                if Circle::new(p, cr).intersects(c) {
+                    // we include this cell's points span in
+                    // the results
+                    //
+                    let span = &self.index[(y * self.size + x) as usize];
+
+                    // move all the points into the result set
+                    //
+                    for point_idx in span.offset..span.size + span.offset {
+                        results.push(self.points[point_idx as usize]);
+                    }
+                }
+            }
+        }
+
+        results
     }
 }
 
@@ -200,9 +298,9 @@ fn gen_random_points(count: u32, bounds: Bounds) -> Vec<Point> {
 
 fn test() {
     let bounds = Bounds::new(0.0, 0.0, 100.0, 200.0);
-    let points = gen_random_points(1000, bounds);
+    let points = gen_random_points(10, bounds);
 
-    let map = PointMap::new(points, 30);
+    let map = PointMap::new(points, 2);
 
     println!("{:?}", map);
 
@@ -210,7 +308,14 @@ fn test() {
     //       API if we wanted to remove the allocation for the
     //       returned vector.
     //
-    let near = map.nearest(4, &Point::new(50.0, 100.0), 10.0);
+    let c = Circle::new(Point::new(50.0, 100.0), 10.0);
+    let near = map.nearest(4, &c);
+
+    println!("Found {} points", near.len());
+
+    for p in &near {
+        println!("point: {:?}", p);
+    }
 }
 
 fn main() {
