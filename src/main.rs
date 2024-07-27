@@ -46,12 +46,6 @@ struct PointMapSpan {
     size: u32,
 }
 
-// impl Default for PointMapSpan {
-//     fn default() -> Self {
-//         PointMapSpan::invalid
-//     }
-// }
-
 impl PointMapSpan {
     pub fn new(offset: u32, count: u32) -> Self {
         Self {
