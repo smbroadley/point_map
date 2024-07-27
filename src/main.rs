@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{mem::size_of_val, ops::Range};
 
 use rand::Rng;
 
@@ -151,45 +151,6 @@ impl PointMap {
             span.size += 1;
         }
 
-        // let mut span_groups = std::collections::HashMap::<u32, PointMapSpan>::new();
-
-        // for (i, p) in points.iter().enumerate() {
-        //     let cell = cell_index_of(p);
-
-        //     // add this cell-index as a single-element span to the
-        //     // PointMap index, or update the span count if it already
-        //     // exists (as we know they are all contiguous from the sort)
-        //     //
-        //     span_groups
-        //         .entry(cell)
-        //         .or_insert_with(|| PointMapSpan::empty_at(i as u32))
-        //         .size += 1;
-        // }
-
-        // // NOTE we could support a sparse index here, but we would need
-        // //      to do a binary search into 'index' when locating the spans.
-        // ///
-        // // let mut index: Vec<PointMapSpan> = span_groups.into_values().collect();
-        // //----------------------------------------------------------------
-
-        // // ensure there is an entry for each cell, even if there are no
-        // // points in it.
-        // //
-        // let index_size = size * size;
-        // let mut index = Vec::<PointMapSpan>::with_capacity(index_size);
-
-        // for i in 0..index_size {
-        //     index[i] =
-        // }
-
-        // // NOTE I think we should already be sorted, but I need to check
-        // //      this... sorting a sorted vec shoudl be super quick, in any
-        // //      case.
-        // //
-        // index.sort_unstable_by_key(|k| k.offset);
-
-        println!("index size: {}", index.len());
-
         Self {
             size,
             points,
@@ -200,15 +161,16 @@ impl PointMap {
     }
 
     fn point_to_cell(&self, p: &Point) -> (u32, u32) {
-        let max_idx = self.size - 1;
         let bounds = self.bounds;
         let factor = self.factor;
 
-        let mut cell_x = ((p.x - bounds.left) / factor) as u32;
-        let mut cell_y = ((p.y - bounds.top) / factor) as u32;
+        let mut cell_x = ((p.x - bounds.left) * factor) as u32;
+        let mut cell_y = ((p.y - bounds.top) * factor) as u32;
 
         // make sure we don't go out of bounds!
         //
+        let max_idx = self.size - 1;
+
         cell_x = cell_x.clamp(0, max_idx);
         cell_y = cell_y.clamp(0, max_idx);
 
@@ -226,16 +188,16 @@ impl PointMap {
     }
 
     fn cell_bounds(&self, c: &Circle) -> ((u32, u32), (u32, u32)) {
-        let tl = self.point_to_cell(&Point::new(c.center.x - c.radius, c.center.y - c.radius));
-        let br = self.point_to_cell(&Point::new(c.center.x + c.radius, c.center.y + c.radius));
+        let tl = Point::new(c.center.x - c.radius, c.center.y - c.radius);
+        let br = Point::new(c.center.x + c.radius, c.center.y + c.radius);
 
-        (tl, br)
+        (self.point_to_cell(&tl), self.point_to_cell(&br))
     }
 
     fn get_points(&self, x: u32, y: u32) -> &[Point] {
         let span = &self.index[(y * self.size + x) as usize];
 
-        println!("span: {:?}", span);
+        // println!("span: {:?}", span);
 
         &self.points[span.range()]
     }
@@ -246,7 +208,7 @@ impl PointMap {
         //
         let (tl, br) = self.cell_bounds(c);
 
-        println!("tl: {:?}   br: {:?}", tl, br);
+        // println!("tl: {:?}   br: {:?}", tl, br);
 
         let mut results = Vec::<Point>::with_capacity(count as usize);
 
@@ -258,7 +220,7 @@ impl PointMap {
                 let p = self.cell_to_point(x, y);
                 let cr = 1.0 / self.factor;
 
-                println!("searching: cell({}, {}) {:?} cell-radius({})", x, y, p, cr);
+                // println!("searching: cell({}, {}) {:?} cell-radius({})", x, y, p, cr);
 
                 if Circle::new(p, cr).intersects(c) {
                     for p in self.get_points(x, y) {
@@ -275,9 +237,12 @@ impl PointMap {
 impl std::fmt::Debug for PointMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "PointMap:")?;
-        writeln!(f, "    size: {}", self.size)?;
+        writeln!(f, "    size: {} x {}", self.size, self.size)?;
+        writeln!(f, "    index size: {}", self.index.len())?;
+        writeln!(f, "    index bytes: {}", size_of_val(&self.index[..]))?;
         writeln!(f, "    points: {}", self.points.len())?;
         writeln!(f, "    bounds: {:?}", self.bounds)?;
+
         Ok(())
     }
 }
@@ -321,9 +286,9 @@ fn gen_random_points(count: u32, bounds: Bounds) -> Vec<Point> {
 
 fn test() {
     let bounds = Bounds::new(0.0, 0.0, 100.0, 200.0);
-    let points = gen_random_points(10, bounds);
+    let points = gen_random_points(1_000, bounds);
 
-    let map = PointMap::new(points, 2);
+    let map = PointMap::new(points, 100);
 
     println!("{:?}", map);
 
@@ -343,12 +308,6 @@ fn test() {
 
 fn main() {
     test();
-    // let points = vec![Point::new(10.0, 20.0), Point::new(30.0, 40.0)];
-    // let map = PointMap::new(points, 1);
-
-    // for span in &map.index {
-    //     println!("o: {} s: {}", span.offset, span.size);
-    // }
 }
 
 #[cfg(test)]
