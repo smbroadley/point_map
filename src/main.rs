@@ -96,8 +96,8 @@ impl PointMap {
         //
         let cell_index_of = |p: &Point| {
             let max_idx = size - 1;
-            let cx = max_idx.min((p.x * factor) as u32);
-            let cy = max_idx.min((p.y * factor) as u32);
+            let cx = max_idx.min(((p.x - bounds.left) * factor) as u32);
+            let cy = max_idx.min(((p.y - bounds.top) * factor) as u32);
 
             cx + cy * size
         };
