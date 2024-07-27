@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Deref};
 
 use rand::{thread_rng, Rng};
 
@@ -134,8 +134,20 @@ impl PointMap {
         }
     }
 
-    pub fn nearest(&self, count: i32, sample: Point) -> Vec<Point> {
-        todo!()
+    pub fn nearest(&self, count: i32, sample: &Point, radius: f32) -> Vec<Point> {
+        // TODO: check that the following lambdas do inline
+        //
+        let max_idx = self.size - 1;
+        let bounds = self.bounds;
+        let factor = self.factor;
+
+        let cell_x_of = move |p: &Point| max_idx.min(((p.x - bounds.left) * factor) as u32);
+        let cell_y_of = move |p: &Point| max_idx.min(((p.y - bounds.top) * factor) as u32);
+
+        let cell_xy_of = move |p: &Point| (cell_x_of(p), cell_y_of(p));
+        let cell_index_of = move |p: &Point| cell_x_of(p) + cell_y_of(p) * self.size;
+
+        vec![]
     }
 }
 
@@ -198,7 +210,7 @@ fn test() {
     //       API if we wanted to remove the allocation for the
     //       returned vector.
     //
-    let near = map.nearest(4, Point::new(50.0, 100.0));
+    let near = map.nearest(4, &Point::new(50.0, 100.0), 10.0);
 }
 
 fn main() {
