@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rand::{thread_rng, Rng};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -13,18 +15,15 @@ impl Point {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-struct Bounds<T> {
-    left: T,
-    right: T,
-    top: T,
-    bottom: T,
+struct Bounds {
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
 }
 
-// NOTE: templated in case I want to use this for PointMap internals,
-// but it is looking like I will not, so it may get removed.
-//
-impl<T> Bounds<T> {
-    pub fn new(left: T, top: T, right: T, bottom: T) -> Bounds<T> {
+impl Bounds {
+    pub fn new(left: f32, top: f32, right: f32, bottom: f32) -> Bounds {
         Self {
             left,
             top,
@@ -32,19 +31,60 @@ impl<T> Bounds<T> {
             bottom,
         }
     }
+
+    fn width(&self) -> f32 {
+        self.right - self.left
+    }
+
+    fn height(&self) -> f32 {
+        self.bottom - self.top
+    }
+}
+
+struct PointMapSpan {
+    offset: u32,
+    size: u32,
+}
+
+// impl Default for PointMapSpan {
+//     fn default() -> Self {
+//         PointMapSpan::invalid
+//     }
+// }
+
+impl PointMapSpan {
+    pub fn new(offset: u32, count: u32) -> Self {
+        Self {
+            offset,
+            size: count,
+        }
+    }
+
+    fn empty_at(offset: u32) -> Self {
+        Self { offset, size: 0 }
+    }
 }
 
 struct PointMap {
-    width: u32,
-    height: u32,
+    size: u32,
     points: Vec<Point>,
-    bounds: Bounds<f32>, // bounds of the points
-    mapping: fn(f32, f32) -> (u32, u32),
+    bounds: Bounds, // bounds of the points
+    factor: f32,
+    index: Vec<PointMapSpan>,
 }
 
 impl PointMap {
-    pub fn new(points: Vec<Point>) -> Self {
+    pub fn new(mut points: Vec<Point>, size: u32) -> Self {
         let bounds = points_bounds(&points);
+
+        // NOTE: we must ensure that the mapped space is orthonormal(?)
+        //       to the input space, so that we can perform simple
+        //       circle-circle intersections in our search algorithm.
+        //
+        let extent = bounds.width().max(bounds.height());
+        let factor = size as f32 / extent;
+
+        println!("size: {} extent: {}, factor: {}", size, extent, factor);
 
         // to make storage as effecient as possible, we re-order the
         // points in the vector to match the order they would appear
@@ -54,13 +94,49 @@ impl PointMap {
         // own 'offset + size' slice format for further optimization
         // instead of the Rust slice which uses more storage.
         //
+        let cell_index_of = |p: &Point| {
+            let max_idx = size - 1;
+            let cx = max_idx.min((p.x * factor) as u32);
+            let cy = max_idx.min((p.y * factor) as u32);
+
+            cx + cy * size
+        };
+
+        points.sort_unstable_by_key(cell_index_of);
+
+        // perform indexing on the sorted list of points
+        // NOTE: we could just walk the list and build this,
+        //       but for simplicity we use a map to gather results.
+        //
+        let mut span_groups = HashMap::<u32, PointMapSpan>::new();
+
+        for (i, p) in points.iter().enumerate() {
+            let cell = cell_index_of(p);
+
+            // add this cell-index as a single-element span to the
+            // PointMap index, or update the span count if it already
+            // exists (as we know they are all contiguous from the sort)
+            //
+            span_groups
+                .entry(cell)
+                .or_insert_with(|| PointMapSpan::empty_at(i as u32))
+                .size += 1;
+        }
+
+        let mut index: Vec<PointMapSpan> = span_groups.into_values().collect();
+
+        // NOTE I think we should already be sorted, but I need to check
+        //      this... sorting a sorted vec shoudl be super quick, in any
+        //      case.
+        //
+        index.sort_unstable_by_key(|k| k.offset);
 
         Self {
-            width: 0,
-            height: 0,
+            size,
             points,
             bounds,
-            mapping: |x, y| (0, 0),
+            factor,
+            index,
         }
     }
 
@@ -69,8 +145,8 @@ impl PointMap {
     }
 }
 
-fn points_bounds(points: &Vec<Point>) -> Bounds<f32> {
-    let mut bounds = Bounds::<f32>::new(f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+fn points_bounds(points: &Vec<Point>) -> Bounds {
+    let mut bounds = Bounds::new(f32::MAX, f32::MAX, f32::MIN, f32::MIN);
 
     for p in points {
         if p.x < bounds.left {
@@ -90,7 +166,7 @@ fn points_bounds(points: &Vec<Point>) -> Bounds<f32> {
     bounds
 }
 
-fn gen_random_points(count: u32, bounds: Bounds<f32>) -> Vec<Point> {
+fn gen_random_points(count: u32, bounds: Bounds) -> Vec<Point> {
     let mut rng = thread_rng();
     let mut res = Vec::new();
 
@@ -110,7 +186,7 @@ fn test() {
     let bounds = Bounds::new(0.0, 0.0, 100.0, 200.0);
     let points = gen_random_points(1000, bounds);
 
-    let map = PointMap::new(points);
+    let map = PointMap::new(points, 30);
 
     // NOTE: we could provide a map.nearest(&mut out[0..4])->u32
     //       API if we wanted to remove the allocation for the
@@ -120,7 +196,12 @@ fn test() {
 }
 
 fn main() {
-    println!("{}", thread_rng().gen::<f32>());
+    let points = vec![Point::new(10.0, 20.0), Point::new(30.0, 40.0)];
+    let map = PointMap::new(points, 1);
+
+    for span in &map.index {
+        println!("o: {} s: {}", span.offset, span.size);
+    }
 }
 
 #[cfg(test)]
@@ -137,5 +218,22 @@ mod test {
     fn test_points_bounds_two() {
         let points = vec![Point::new(10.0, 20.0), Point::new(30.0, 40.0)];
         assert_eq!(points_bounds(&points), Bounds::new(10.0, 20.0, 30.0, 40.0));
+    }
+
+    #[test]
+    fn test_point_map_index_consistency() {
+        let points = vec![Point::new(10.0, 20.0), Point::new(30.0, 40.0)];
+        let map = PointMap::new(points, 1);
+
+        for span in &map.index {
+            println!("o: {} s: {}", span.offset, span.size);
+        }
+
+        // validate the points ended up in the same span in the index
+        //
+        let span = &map.index[0];
+
+        assert_eq!(span.offset, 0);
+        assert_eq!(span.size, 2);
     }
 }
