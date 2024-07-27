@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use rand::Rng;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -64,6 +66,7 @@ impl Bounds {
     }
 }
 
+#[derive(Debug)]
 struct PointMapSpan {
     offset: u32,
     size: u32,
@@ -78,8 +81,12 @@ impl PointMapSpan {
         }
     }
 
-    fn empty_at(offset: u32) -> Self {
+    pub fn empty_at(offset: u32) -> Self {
         Self { offset, size: 0 }
+    }
+
+    pub fn range(&self) -> Range<usize> {
+        self.offset as usize..(self.offset + self.size) as usize
     }
 }
 
@@ -124,28 +131,64 @@ impl PointMap {
         // NOTE: we could just walk the list and build this,
         //       but for simplicity we use a map to gather results.
         //
-        let mut span_groups = std::collections::HashMap::<u32, PointMapSpan>::new();
+        let index_size = (size * size) as usize;
+        let mut index = Vec::<PointMapSpan>::with_capacity(index_size);
+
+        index.resize_with(index_size, || PointMapSpan::empty_at(0));
 
         for (i, p) in points.iter().enumerate() {
             let cell = cell_index_of(p);
+            let span = &mut index[cell as usize];
 
-            // add this cell-index as a single-element span to the
-            // PointMap index, or update the span count if it already
-            // exists (as we know they are all contiguous from the sort)
+            // if the 'size' is 0, we know we are just now initializing
+            // this span, and we now set the 'offset' value now, and
+            // never again.
             //
-            span_groups
-                .entry(cell)
-                .or_insert_with(|| PointMapSpan::empty_at(i as u32))
-                .size += 1;
+            if span.size == 0 {
+                span.offset = i as u32;
+            }
+
+            span.size += 1;
         }
 
-        let mut index: Vec<PointMapSpan> = span_groups.into_values().collect();
+        // let mut span_groups = std::collections::HashMap::<u32, PointMapSpan>::new();
 
-        // NOTE I think we should already be sorted, but I need to check
-        //      this... sorting a sorted vec shoudl be super quick, in any
-        //      case.
-        //
-        index.sort_unstable_by_key(|k| k.offset);
+        // for (i, p) in points.iter().enumerate() {
+        //     let cell = cell_index_of(p);
+
+        //     // add this cell-index as a single-element span to the
+        //     // PointMap index, or update the span count if it already
+        //     // exists (as we know they are all contiguous from the sort)
+        //     //
+        //     span_groups
+        //         .entry(cell)
+        //         .or_insert_with(|| PointMapSpan::empty_at(i as u32))
+        //         .size += 1;
+        // }
+
+        // // NOTE we could support a sparse index here, but we would need
+        // //      to do a binary search into 'index' when locating the spans.
+        // ///
+        // // let mut index: Vec<PointMapSpan> = span_groups.into_values().collect();
+        // //----------------------------------------------------------------
+
+        // // ensure there is an entry for each cell, even if there are no
+        // // points in it.
+        // //
+        // let index_size = size * size;
+        // let mut index = Vec::<PointMapSpan>::with_capacity(index_size);
+
+        // for i in 0..index_size {
+        //     index[i] =
+        // }
+
+        // // NOTE I think we should already be sorted, but I need to check
+        // //      this... sorting a sorted vec shoudl be super quick, in any
+        // //      case.
+        // //
+        // index.sort_unstable_by_key(|k| k.offset);
+
+        println!("index size: {}", index.len());
 
         Self {
             size,
@@ -161,8 +204,13 @@ impl PointMap {
         let bounds = self.bounds;
         let factor = self.factor;
 
-        let cell_x = max_idx.min(((p.x - bounds.left) / factor) as u32);
-        let cell_y = max_idx.min(((p.y - bounds.top) / factor) as u32);
+        let mut cell_x = ((p.x - bounds.left) / factor) as u32;
+        let mut cell_y = ((p.y - bounds.top) / factor) as u32;
+
+        // make sure we don't go out of bounds!
+        //
+        cell_x = cell_x.clamp(0, max_idx);
+        cell_y = cell_y.clamp(0, max_idx);
 
         (cell_x, cell_y)
     }
@@ -177,18 +225,26 @@ impl PointMap {
         Point::new(px, py)
     }
 
-    fn get_cell_bounds(&self, c: &Circle) -> ((u32, u32), (u32, u32)) {
+    fn cell_bounds(&self, c: &Circle) -> ((u32, u32), (u32, u32)) {
         let tl = self.point_to_cell(&Point::new(c.center.x - c.radius, c.center.y - c.radius));
         let br = self.point_to_cell(&Point::new(c.center.x + c.radius, c.center.y + c.radius));
 
         (tl, br)
     }
 
+    fn get_points(&self, x: u32, y: u32) -> &[Point] {
+        let span = &self.index[(y * self.size + x) as usize];
+
+        println!("span: {:?}", span);
+
+        &self.points[span.range()]
+    }
+
     pub fn nearest(&self, count: i32, c: &Circle) -> Vec<Point> {
         // calculate the top-left, and bottom-right cell
         // indecies as our initial set of cells to consider
         //
-        let (tl, br) = self.get_cell_bounds(c);
+        let (tl, br) = self.cell_bounds(c);
 
         println!("tl: {:?}   br: {:?}", tl, br);
 
@@ -202,21 +258,11 @@ impl PointMap {
                 let p = self.cell_to_point(x, y);
                 let cr = 1.0 / self.factor;
 
-                println!(
-                    "searching: cell({}, {}) point({:?}) radius({})",
-                    x, y, p, cr
-                );
+                println!("searching: cell({}, {}) {:?} cell-radius({})", x, y, p, cr);
 
                 if Circle::new(p, cr).intersects(c) {
-                    // we include this cell's points span in
-                    // the results
-                    //
-                    let span = &self.index[(y * self.size + x) as usize];
-
-                    // move all the points into the result set
-                    //
-                    for point_idx in span.offset..span.size + span.offset {
-                        results.push(self.points[point_idx as usize]);
+                    for p in self.get_points(x, y) {
+                        results.push(*p);
                     }
                 }
             }
