@@ -8,16 +8,21 @@ struct Point {
     y: f32,
 }
 
+#[allow(dead_code)]
 impl Point {
     pub fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
 
-    pub fn distance_to(&self, p: Point) -> f32 {
+    pub fn distance_sq_to(&self, p: Point) -> f32 {
         let dx = (self.x - p.x).abs();
         let dy = (self.y - p.y).abs();
 
-        ((dx * dx) + (dy * dy)).sqrt()
+        (dx * dx) + (dy * dy)
+    }
+
+    pub fn distance_to(&self, p: Point) -> f32 {
+        self.distance_sq_to(p).sqrt()
     }
 }
 
@@ -29,9 +34,13 @@ struct Circle {
 
 impl Circle {
     pub fn intersects(&self, other: &Circle) -> bool {
-        let dist = self.center.distance_to(other.center);
+        // NOTE: we are using distance-squared comparisons,
+        //       which benchmarks have show are much quicker.
+        //
+        let dist = self.center.distance_sq_to(other.center);
+        let rsum = self.radius + other.radius;
 
-        dist < (self.radius + other.radius)
+        dist < (rsum * rsum)
     }
 
     fn new(center: Point, radius: f32) -> Self {
@@ -194,6 +203,11 @@ impl PointMap {
         (self.point_to_cell(&tl), self.point_to_cell(&br))
     }
 
+    /// # Examples
+    ///
+    /// ```
+    /// asserteq!(true, false);
+    /// ```
     fn get_points(&self, x: u32, y: u32) -> &[Point] {
         let span = &self.index[(y * self.size + x) as usize];
 
@@ -202,15 +216,14 @@ impl PointMap {
         &self.points[span.range()]
     }
 
-    pub fn nearest(&self, count: i32, c: &Circle) -> Vec<Point> {
+    pub fn nearest(&self, count: usize, c: &Circle) -> Vec<(f32, Point)> {
         // calculate the top-left, and bottom-right cell
         // indecies as our initial set of cells to consider
         //
         let (tl, br) = self.cell_bounds(c);
+        let cap_dist_sq = c.radius * c.radius;
 
-        // println!("tl: {:?}   br: {:?}", tl, br);
-
-        let mut results = Vec::<Point>::with_capacity(count as usize);
+        let mut results = Vec::<_>::with_capacity(count);
 
         for y in tl.1..=br.1 {
             for x in tl.0..=br.0 {
@@ -220,14 +233,36 @@ impl PointMap {
                 let p = self.cell_to_point(x, y);
                 let cr = 1.0 / self.factor;
 
-                // println!("searching: cell({}, {}) {:?} cell-radius({})", x, y, p, cr);
-
                 if Circle::new(p, cr).intersects(c) {
                     for p in self.get_points(x, y) {
-                        results.push(*p);
+                        let dist_sq = p.distance_sq_to(c.center);
+                        if dist_sq <= cap_dist_sq {
+                            results.push((dist_sq, *p));
+                        }
                     }
                 }
             }
+        }
+
+        // of course, there is no sorting by f32 or f64 in Rust,
+        // even though there is an absolute sorting defined in
+        // IEE754... fun.
+        //
+        // results.sort_by_key(|p| p.distance_sq_to(c.center));
+        //
+        // we do it with a partial_cmp call...
+        //
+        results.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        if results.len() > count {
+            results.resize(count, (0.0, Point::new(0.0, 0.0)));
+        }
+
+        // NOTE: we just compute disatnce-squared to improce
+        //       performance, so now we have to .sqrt() them.
+        //
+        for (dist, _) in results.iter_mut() {
+            *dist = dist.sqrt();
         }
 
         results
@@ -296,13 +331,24 @@ fn test() {
     //       API if we wanted to remove the allocation for the
     //       returned vector.
     //
-    let c = Circle::new(Point::new(50.0, 100.0), 10.0);
+    let c = Circle::new(Point::new(50.0, 100.0), 4.0);
     let near = map.nearest(4, &c);
 
-    println!("Found {} points", near.len());
+    println!(
+        "Found {} points within {} units of {:?}",
+        near.len(),
+        c.radius,
+        c.center
+    );
 
-    for p in &near {
-        println!("point: {:?}", p);
+    if near.len() > 0 {
+        println!("");
+        println!("  distance   point");
+        println!("╭────────────────────────────────────────────────╮");
+        for p in &near {
+            println!("│ {:#8.2}   {:>8.2?}  │", p.0, p.1);
+        }
+        println!("╰────────────────────────────────────────────────╯");
     }
 }
 
@@ -337,5 +383,57 @@ mod test {
 
         assert_eq!(span.offset, 0);
         assert_eq!(span.size, 2);
+    }
+
+    #[test]
+    fn test_accuracy() {
+        let points = {
+            let n = |x: u32, y: u32| Point::new(x as f32, y as f32);
+            vec![
+                // set extents
+                n(0, 0),
+                n(4, 4),
+                // inner points that sit in centre of cells
+                n(1, 1),
+                n(2, 1),
+                n(3, 1),
+                n(1, 2),
+                n(2, 2),
+                n(3, 2),
+                n(1, 3),
+                n(2, 3),
+                n(3, 3),
+            ]
+        };
+
+        let map = PointMap::new(points, 2);
+
+        assert_eq!(
+            map.bounds,
+            Bounds::new(0.0, 0.0, 4.0, 4.0),
+            "Bounds should be (0,0)->(5,5)"
+        );
+
+        assert_eq!(map.factor, 0.5, "Factor should be 0.5");
+
+        // we have this map of cells:
+        // ╭───────────────────────╮
+        // │       │       │       │
+        // │   A   │   B   │   C   │
+        // │       │       │       │
+        // │───────┼───────┼───────│
+        // │       │       │       │
+        // │   D   │   E   │   F   │
+        // │       │       │       │
+        // │───────┼───────┼───────│
+        // │       │       │       │
+        // │   G   │   H   │   I   │
+        // │       │       │       │
+        // ╰───────────────────────╯
+        //
+        // where the center (E) is physically at point (2,2)
+        // and cells are 2 units wide.
+        //
+        assert_eq!(1, 1);
     }
 }
