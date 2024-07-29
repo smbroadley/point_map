@@ -108,12 +108,14 @@ struct PointMap {
 }
 
 impl PointMap {
+    /// Creates a new [`PointMap`].
     pub fn new(mut points: Vec<Point>, size: u32) -> Self {
         let bounds = points_bounds(&points);
 
-        // NOTE: we must ensure that the mapped space is orthonormal(?)
-        //       to the input space, so that we can perform simple
-        //       circle-circle intersections in our search algorithm.
+        // we must ensure that cell-space is a simple scale-
+        // mappint to and from the point-space, so calulate
+        // the extents, and take the largest axis as the
+        // one to base the scale factor on
         //
         let extent = bounds.width().max(bounds.height());
         let factor = size as f32 / extent;
@@ -324,10 +326,14 @@ impl PointMap {
 
 impl std::fmt::Debug for PointMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let num_pts = self.points.len();
+        let avg_occ = self.points.len() as f32 / (self.size * self.size) as f32;
+
         writeln!(f, "PointMap:")?;
-        writeln!(f, "    points: {}", self.points.len())?;
+        writeln!(f, "    points: {}", num_pts)?;
         writeln!(f, "     cells: {} x {}", self.size, self.size)?;
         writeln!(f, "       mem: {} KB", size_of_val(&self.index[..]) / 1024)?;
+        writeln!(f, " occupancy: {} points per cell (est)", avg_occ)?;
 
         Ok(())
     }
@@ -387,13 +393,20 @@ fn test() {
     let timer = Instant::now();
     let near = map.nearest(4, &c);
 
-    println!(
-        "Found {} points within {} units of {:?} in {} ms",
+    print!(
+        "Found {} points within {} units of {:?} in ",
         near.len(),
         c.radius,
-        c.center,
-        timer.elapsed().as_millis(),
+        c.center
     );
+
+    let elapsed = timer.elapsed();
+
+    if elapsed.as_millis() > 0 {
+        println!("{} ms", elapsed.as_millis());
+    } else {
+        println!("{} μs", elapsed.as_micros());
+    }
 
     if near.len() > 0 {
         println!("");
