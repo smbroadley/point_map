@@ -49,15 +49,21 @@ impl Circle {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-struct Bounds {
-    left: f32,
-    right: f32,
-    top: f32,
-    bottom: f32,
+struct BoundsT<T> {
+    left: T,
+    right: T,
+    top: T,
+    bottom: T,
 }
 
-impl Bounds {
-    pub fn new(left: f32, top: f32, right: f32, bottom: f32) -> Bounds {
+use std::ops::{Mul, RangeInclusive, Sub};
+
+impl<T> BoundsT<T>
+where
+    T: std::ops::Sub + Copy,
+    <T as std::ops::Sub>::Output: std::ops::Mul,
+{
+    pub fn new(left: T, top: T, right: T, bottom: T) -> Self {
         Self {
             left,
             top,
@@ -66,14 +72,29 @@ impl Bounds {
         }
     }
 
-    fn width(&self) -> f32 {
+    fn width(&self) -> <T as Sub>::Output {
         self.right - self.left
     }
 
-    fn height(&self) -> f32 {
+    fn height(&self) -> <T as Sub>::Output {
         self.bottom - self.top
     }
+
+    fn area(&self) -> <<T as Sub>::Output as Mul>::Output {
+        (self.right - self.left) * (self.bottom - self.top)
+    }
+
+    fn x_range(&self) -> RangeInclusive<T> {
+        self.left..=self.right
+    }
+
+    fn y_range(&self) -> RangeInclusive<T> {
+        self.top..=self.bottom
+    }
 }
+
+type Bounds = BoundsT<f32>;
+type CellBounds = BoundsT<u32>;
 
 #[derive(Debug)]
 struct PointMapSpan {
@@ -196,11 +217,14 @@ impl PointMap {
         Point::new(px, py)
     }
 
-    fn cell_bounds(&self, c: &Circle) -> ((u32, u32), (u32, u32)) {
+    fn cell_bounds(&self, c: &Circle) -> CellBounds {
         let tl = Point::new(c.center.x - c.radius, c.center.y - c.radius);
         let br = Point::new(c.center.x + c.radius, c.center.y + c.radius);
 
-        (self.point_to_cell(&tl), self.point_to_cell(&br))
+        let ctl = self.point_to_cell(&tl);
+        let cbr = self.point_to_cell(&br);
+
+        CellBounds::new(ctl.0, ctl.1, cbr.0, cbr.1)
     }
 
     /// # Examples
@@ -218,7 +242,7 @@ impl PointMap {
         // calculate the top-left, and bottom-right cell
         // indecies as our initial set of cells to consider
         //
-        let (tl, br) = self.cell_bounds(c);
+        let cell_bounds = self.cell_bounds(c);
 
         // we do not need to return the *real* distance to any
         // particular particle, so we can stay in "squared-
@@ -231,20 +255,24 @@ impl PointMap {
         // for particles; it's maximum capacity is calculatable
         // from the cells bounds' area
         //
-        let cells_area = (br.0 - tl.0) * (br.1 - tl.1); // TODO: tidy-up
+        let cells_area = cell_bounds.area();
         let mut cells = Vec::<_>::with_capacity(cells_area as usize);
 
         // iterate over the cells' coordinates in the bounds,
         // testing to see if a circle placed at the center of
         // the cell would intersect our search circle argument.
         //
-        for y in tl.1..=br.1 {
-            for x in tl.0..=br.0 {
-                let p = self.cell_to_point(x, y);
-                let cr = 1.0 / self.factor;
+        for y in cell_bounds.y_range() {
+            for x in cell_bounds.x_range() {
+                // calculate cell-point (cp) and cell-radius (cr)
+                //
+                let cp = self.cell_to_point(x, y);
+                let cr = (1.0 / self.factor) / 2.0 * std::f32::consts::SQRT_2;
 
-                if Circle::new(p, cr).intersects(c) {
-                    let dist = p.distance_sq_to(c.center); // TODO: get this from previous call
+                // does it intersect with our search bounds (c)
+                //
+                if Circle::new(cp, cr).intersects(c) {
+                    let dist = cp.distance_sq_to(c.center); // TODO: get this from previous call
                     let index = x + y * self.size;
 
                     // add this to the list of potential cells
