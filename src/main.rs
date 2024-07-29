@@ -1,6 +1,6 @@
-use std::{mem::size_of_val, ops::Range};
-
 use rand::Rng;
+use std::time::Instant;
+use std::{mem::size_of_val, ops::Range};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 struct Point {
@@ -208,10 +208,8 @@ impl PointMap {
     /// ```
     /// asserteq!(true, false);
     /// ```
-    fn get_points(&self, x: u32, y: u32) -> &[Point] {
-        let span = &self.index[(y * self.size + x) as usize];
-
-        // println!("span: {:?}", span);
+    fn get_points(&self, index: u32) -> &[Point] {
+        let span = &self.index[index as usize];
 
         &self.points[span.range()]
     }
@@ -221,24 +219,79 @@ impl PointMap {
         // indecies as our initial set of cells to consider
         //
         let (tl, br) = self.cell_bounds(c);
-        let cap_dist_sq = c.radius * c.radius;
 
-        let mut results = Vec::<_>::with_capacity(count);
+        // we do not need to return the *real* distance to any
+        // particular particle, so we can stay in "squared-
+        // distance-space" for better performance when testing
+        // for circle intersections
+        //
+        let search_dist_sq = c.radius * c.radius;
 
+        // create a vec to contain the cells we need to check
+        // for particles; it's maximum capacity is calculatable
+        // from the cells bounds' area
+        //
+        let cells_area = (br.0 - tl.0) * (br.1 - tl.1); // TODO: tidy-up
+        let mut cells = Vec::<_>::with_capacity(cells_area as usize);
+
+        // iterate over the cells' coordinates in the bounds,
+        // testing to see if a circle placed at the center of
+        // the cell would intersect our search circle argument.
+        //
         for y in tl.1..=br.1 {
             for x in tl.0..=br.0 {
-                // check to see if a circle around the sample point
-                // intersects the circle surrounding the cell
-                //
                 let p = self.cell_to_point(x, y);
                 let cr = 1.0 / self.factor;
 
                 if Circle::new(p, cr).intersects(c) {
-                    for p in self.get_points(x, y) {
-                        let dist_sq = p.distance_sq_to(c.center);
-                        if dist_sq <= cap_dist_sq {
-                            results.push((dist_sq, *p));
-                        }
+                    let dist = p.distance_sq_to(c.center); // TODO: get this from previous call
+                    let index = x + y * self.size;
+
+                    // add this to the list of potential cells
+                    //
+                    cells.push((dist, index));
+                }
+            }
+        }
+
+        cells.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        // iterate through the cells indexes and add points
+        // to the result set...
+        //
+        let mut results = Vec::<_>::with_capacity(count);
+
+        // create an ever increasing radius of a circle that
+        // would entirely cover a cell; that is a circle of
+        // radius 'cell-center to cell-corner'
+        //
+        let cell_inner_radius = (1.0 / self.factor) / 2.0;
+        let cell_outer_radius = cell_inner_radius * std::f32::consts::SQRT_2;
+
+        // we expand the radius check each iteration whilds
+        // adding points to the potential result set, starting
+        // with the smallest radius check possible
+        //
+        let mut radius_check = cell_outer_radius;
+
+        for &(dist, idx) in &cells {
+            // if we find a distance (in our distance-sorted list)
+            // that is bigger than our current checkin radius, we
+            // can early out if we have ennough points in the result
+            // set; otherwise, increase the search radius, and gather
+            // more points
+            //
+            if dist > radius_check {
+                if results.len() >= count {
+                    break; // bingo!
+                }
+
+                radius_check += cell_outer_radius;
+            } else {
+                for p in self.get_points(idx) {
+                    let dist_sq = p.distance_sq_to(c.center);
+                    if dist_sq <= search_dist_sq {
+                        results.push((dist_sq, *p));
                     }
                 }
             }
@@ -272,11 +325,9 @@ impl PointMap {
 impl std::fmt::Debug for PointMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "PointMap:")?;
-        writeln!(f, "    size: {} x {}", self.size, self.size)?;
-        writeln!(f, "    index size: {}", self.index.len())?;
-        writeln!(f, "    index bytes: {}", size_of_val(&self.index[..]))?;
         writeln!(f, "    points: {}", self.points.len())?;
-        writeln!(f, "    bounds: {:?}", self.bounds)?;
+        writeln!(f, "     cells: {} x {}", self.size, self.size)?;
+        writeln!(f, "       mem: {} KB", size_of_val(&self.index[..]) / 1024)?;
 
         Ok(())
     }
@@ -321,7 +372,7 @@ fn gen_random_points(count: u32, bounds: Bounds) -> Vec<Point> {
 
 fn test() {
     let bounds = Bounds::new(0.0, 0.0, 100.0, 200.0);
-    let points = gen_random_points(1_000, bounds);
+    let points = gen_random_points(1_000_000, bounds);
 
     let map = PointMap::new(points, 100);
 
@@ -331,14 +382,17 @@ fn test() {
     //       API if we wanted to remove the allocation for the
     //       returned vector.
     //
-    let c = Circle::new(Point::new(50.0, 100.0), 4.0);
+    let c = Circle::new(Point::new(50.0, 100.0), 40.0);
+
+    let timer = Instant::now();
     let near = map.nearest(4, &c);
 
     println!(
-        "Found {} points within {} units of {:?}",
+        "Found {} points within {} units of {:?} in {} ms",
         near.len(),
         c.radius,
-        c.center
+        c.center,
+        timer.elapsed().as_millis(),
     );
 
     if near.len() > 0 {
