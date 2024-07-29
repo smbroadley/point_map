@@ -394,7 +394,7 @@ fn test() {
     let near = map.nearest(4, &c);
 
     print!(
-        "Found {} points within {} units of {:?} in ",
+        "Found nearest {} points within {} units of {:?} in ",
         near.len(),
         c.radius,
         c.center
