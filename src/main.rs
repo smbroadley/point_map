@@ -139,8 +139,6 @@ impl PointMap {
         points.sort_unstable_by_key(cell_index_of);
 
         // perform indexing on the sorted list of points
-        // NOTE: we could just walk the list and build this,
-        //       but for simplicity we use a map to gather results.
         //
         let index_size = (size * size) as usize;
         let mut index = Vec::<PointMapSpan>::with_capacity(index_size);
